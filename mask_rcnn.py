@@ -11,23 +11,29 @@ import pandas as pd
 from utils import coco_names
 import imutils
 import time
+from imutils.video import FileVideoStream
+from imutils.video import FPS
 
 class maskR_CNN:
 
-    def __init__(self, file_path, output_folder, coco_names, threshold, colors):
+    def __init__(self, file_path, output_folder, threshold=0.85):
         self.file_path = file_path
         self.coco_names = coco_names
         self.threshold = threshold
         self.output_folder = output_folder
-        self.colors = colors
+        self.colors = np.random.randint(0, 255, size=(len(coco_names), 3), dtype="uint8")
 
     def get_file(self):
-        if self.file_path.split('.')[1] in ['jpg', 'jpeg', 'png']:
+        if self.file_path.split('/')[1] == 'webcam':
+            self.file_path = 'webcam.mp4'
+
+        elif self.file_path.split('.')[1] in ['jpg', 'jpeg', 'png']:
             image = Image.open(file_path).convert('RGB')
             return image
 
         else:
             self.file = cv2.VideoCapture(file_path)
+
             return self
 
     def mask_r_cnn_model(self):
@@ -56,6 +62,7 @@ class maskR_CNN:
 
         labels = [self.coco_names[i] for i in outputs[0]['labels']]
         self.class_ids = [self.coco_names.index(label) for label in labels]
+        
         return masks, boxes, labels, scores
 
     def draw_segmentation_map(self, image, masks, boxes, labels, scores):
@@ -148,28 +155,75 @@ class maskR_CNN:
         writer.release()
         self.file.release()
 
+    def run_on_stream(self):
+        QUEUE_SIZE = 4
+        WIDTH = 850
+
+        self.get_file()
+        self.mask_r_cnn_model()
+        writer=None
+
+        if self.file_path.split('.')[0] == 'webcam':
+            path = 0
+        else:
+            path = self.file_path
+
+        fvs = FileVideoStream(path, transform=None, queue_size=QUEUE_SIZE).start()
+        time.sleep(1.5)
+        fps = FPS().start()
+
+        while fvs.more():
+            frame = fvs.read()
+            frame = imutils.resize(frame, width=WIDTH)
+            
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame = Image.fromarray(frame)
+
+            self.mask_r_cnn_model()
+            self.apply_segmentation(frame)
+
+            # Write on video frame
+            if writer is None:
+                fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+                writer = cv2.VideoWriter(self.output_folder + self.file_path +'_detection.avi', fourcc, 30,
+                    (self.result.shape[1], self.result.shape[0]), True)
+
+            writer.write(self.result)
+    
+            cv2.imshow("Frame", self.result)
+            cv2.waitKey(1)
+            fps.update()
+
+        writer.release()
+        self.file.release()
+        fps.stop()
+        cv2.destroyAllWindows()
+        fvs.stop()
+
+    def run_mask_on_image(self):
+        image = self.get_file()
+        self.mask_r_cnn_model()
+        self.apply_segmentation(image)
+        self.write_image_on_directory()
+
 if __name__ == '__main__':
     file_folder = 'utils/'
     output_folder = 'output'
-    file_name = os.listdir(file_folder)[0]
+    # file_name = os.listdir(file_folder)[0]
+    file_name = 'webcam'
     file_path = file_folder + file_name
-    colors = np.random.randint(0, 255, size=(len(coco_names), 3), dtype="uint8")
-
-    threshold = 0.85
 
     print('Starting Detection...')
     start = time.time()
 
     # Images
-    mask_rcnn = maskR_CNN(file_path, output_folder, coco_names, threshold, colors)
-    image = mask_rcnn.get_file()
-    mask_rcnn.mask_r_cnn_model()
-    mask_rcnn.apply_segmentation(image)
-    mask_rcnn.write_image_on_directory()
+    # maskR_CNN(file_path, output_folder).run_mask_on_image()
 
     # Video
-    # mask_rcnn = maskR_CNN(file_path, output_folder, coco_names, threshold, colors)
-    # mask_rcnn.run_on_video()
+    # mask_rcnn = maskR_CNN(file_path, output_folder).run_on_video()
+    
+    # Stream
+    maskR_CNN(file_path, output_folder).run_on_stream()
 
     end = time.time()
     print('Success!')
